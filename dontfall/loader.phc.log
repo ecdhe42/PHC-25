@@ -1,0 +1,4 @@
+found line 1 < SCREEN 4,1,1>
+[SCREEN][34=4][2c=,][31=1][2c=,][31=1]
+found line 2 < EXEC &HC011>
+[EXEC][26=&][48=H][43=C][30=0][31=1][31=1]
