@@ -1,8 +1,6 @@
     org 0C009h
-    jp init
 
 init:
-    di
     ld a, $F0
     out (040h),a        ; Switch to screen 4
     ld a, $FF
@@ -13,9 +11,12 @@ init:
     ldir
 
     ; Print the top line
-    ld hl, txt_preamble
-    ld ix, $6201
-    call print_text
+    call print_preamble
+
+    ; Print the bottom line
+    ld hl, txt_language
+    ld ix, $76D5
+    call print_text_start
 
     ; Print the labels
     ld hl, label_cpu
@@ -28,6 +29,7 @@ init:
     ld de, $6714
     call print_label
 
+    ; Print the Olipix sprite
     ld hl, sprite_olipix
     ld de, $6D01
     call print_sprite
@@ -60,7 +62,18 @@ init:
     ld (stop), a
     call wait_for_space_key
 
-start_game:
+init_game:
+    ld a, '0'
+    ld (txt_score), a
+    ld (txt_score+1), a
+    ld a, 0
+    ld (attempts), a
+    ld (slot_cpu_id), a
+    ld (slot_ram_id), a
+    ld (slot_gpu_id), a
+    ld (txt_game_over_ptr), a
+
+start_turn:
     call print_nothing
     ld a, 1
     ld (roll_cpu), a
@@ -68,16 +81,7 @@ start_game:
     ld (roll_gpu), a
     ld a, 0
     ld (stop_msg), a
-    ld (slot_cpu_id), a
-    ld (slot_ram_id), a
-    ld (slot_gpu_id), a
-
-;    ld hl, sprite_cpu
-;    ld (slot_cpu_ptr), hl
-;    ld hl, sprite_ram
-;    ld (slot_ram_ptr), hl
-;    ld hl, sprite_gpu
-;    ld (slot_gpu_ptr), hl
+    call update_score
 
 print_slot_loop:
     ld a, (slot_cpu_line)
@@ -198,7 +202,7 @@ stop_roll_ram_end:
     ld (slot_gpu_id), a
     ld a, 1
     ld (stop), a    
-    jp gameover
+    jp end_of_round
 check_stop_end:
 
 ; ********************************************************************
@@ -243,7 +247,7 @@ print_gpu_end:
 
     jp print_slot_loop
 
-gameover:
+end_of_round:
     ld a, 0
     ld (stop), a
 
@@ -279,35 +283,60 @@ gameover:
     ; Otherwise => just right!
     jp print_underpowered
 ready_for_next_game:
+    ld a, (attempts)
+    cp 10
+    jp z, game_lost
     call wait_for_space_key
-    jp start_game
+    jp start_turn
+
+game_lost:
+    call print_game_over_lost
+game_over:
+    call wait_for_space_key
+    jp init
 
 print_overpowered:
     ld hl, txt_olipix1
-    ld ix, $7200
-    call print_text
-    ld hl, txt_olipix1b
-    ld ix, $7400
-    call print_text
+    ld (txt_ptr), hl
+    call print_output
     jp ready_for_next_game
 
 print_underpowered:
     ld hl, txt_olipix2
-    ld ix, $7200
-    call print_text
-    ld hl, txt_olipix2b
-    ld ix, $7400
-    call print_text
-    jp ready_for_next_game
+    ld (txt_ptr), hl
+    call print_output
+    call print_game_over_won
+    jp game_over
 
 print_too_underpowered:
     ld hl, txt_olipix3
+    ld (txt_ptr), hl
+    call print_output
+    jp ready_for_next_game
+
+print_preamble:
+    ld hl, txt_preamble
+    ld ix, $6201
+    call print_text
+    ret
+
+print_output:
+    ld hl, (txt_ptr)
     ld ix, $7200
     call print_text
-    ld hl, txt_olipix3b
+    inc hl
+    ld a, (language)
+    cp 0
+    jp nz, print_output_second_line
+    skip_eng_sentence:
+    ld a, (hl)
+    inc hl
+    cp 0
+    jp nz, skip_eng_sentence    
+print_output_second_line:
     ld ix, $7400
     call print_text
-    jp ready_for_next_game
+    ret
 
 print_nothing:
     ld a, $ff
@@ -411,6 +440,15 @@ print_sprite_loop:
     ret
 
 print_text:
+    ld a, (language)
+    cp 0
+    jp z, print_text_start
+skip_first_sentence:
+    ld a, (hl)
+    inc hl
+    cp 0
+    jp nz, skip_first_sentence
+print_text_start:
     ld iy, 04FECh
     ld a, (hl)
     cp 0
@@ -484,8 +522,61 @@ print_text:
     pop ix
     inc ix
     inc hl
-    jp print_text
+    jp print_text_start
 print_test_end:
+    ret
+
+print_game_over_lost:
+    ld hl, txt_gameover_lost
+    ld (txt_game_over_ptr), hl
+    call print_game_over
+    ret
+
+print_game_over_won:
+    ld a, (attempts_max)
+    ld b, a
+    ld a, (attempts)
+    sub b
+    jp c, record_beat
+    ld hl, txt_gameover_won
+    ld (txt_game_over_ptr), hl
+    jp print_game_over_won_label
+record_beat:
+    ld a, (attempts)
+    ld (attempts_max), a
+    ld hl, txt_gameover_won2
+    ld (txt_game_over_ptr), hl
+print_game_over_won_label:
+    call print_game_over
+    ret
+
+print_game_over:
+    ld hl, (txt_game_over_ptr)
+    ld ix, $6F08
+    call print_text
+    ret
+
+update_score:
+    ld a, (attempts)
+    inc a
+    ld (attempts), a        ; attempts++
+
+    ld a, (txt_score+1)
+    cp '9'
+    jp z, update_upper_decimal
+    inc a
+    ld (txt_score+1), a     ; txt_score[1]++
+    jp update_score_end
+update_upper_decimal:
+    ld a, '0'
+    ld (txt_score+1), a     ; txt_score[1] = '0'
+    ld a, (txt_score)
+    inc a
+    ld (txt_score), a       ; txt_score[0]++
+update_score_end:
+    ld hl, txt_score
+    ld ix, $6F05
+    call print_text_start
     ret
 
 wait_for_space_key:
@@ -493,6 +584,22 @@ wait_for_space_key:
     bit 7, a
     jp z, wait_for_space_key    ; Make sure the space key is not pressed
 wait_for_space_key_down:
+check_for_1_key:
+    in a, (080h)
+    bit 0, a
+    jp nz, check_for_2_key
+    ld a, 0
+    ld (language), a
+    call redraw_switch_language
+    jp check_for_space_key
+check_for_2_key:
+    in a, (083h)
+    bit 0, a
+    jp nz, check_for_space_key
+    ld a, 1
+    ld (language), a
+    call redraw_switch_language
+check_for_space_key:
     in a,(083h)
     bit 7, a
     jp nz, wait_for_space_key_down ; Make sure the space key is pressed
@@ -502,20 +609,16 @@ wait_for_space_key_up:
     jp z, wait_for_space_key_up ; Make sure the space key is not pressed
     ret
 
-random:
-        push    hl
-        push    de
-        ld      hl,(rand_data)
-        ld      a,r
-        ld      d,a
-        ld      e,(hl)
-        add     hl,de
-        add     a,l
-        xor     h
-        ld      (rand_data),hl
-        pop     de
-        pop     hl
-        ret
+redraw_switch_language:
+    ld a, (txt_game_over_ptr)
+    cp 0
+    jp z, redraw_rest
+    call print_game_over
+redraw_rest:
+    call print_preamble
+    call print_nothing
+    call print_output
+    ret
 
 roll_cpu:
     db 0
@@ -526,6 +629,8 @@ roll_gpu:
 slot_cpu_ptr:
     db 1, 1
 stop_msg:
+    db 0
+language:
     db 0
 slot_ram_ptr:
     db 1, 1
@@ -545,26 +650,62 @@ font_ptr:
     db 0, 0
 stop:
     db 0
-rand_data:
-    db 0x34, 0xFA
+attempts:
+    db 0
+attempts_max:
+    db 100
+
+txt_language:
+    db "1.Fr  2.En",0
+
+txt_score:
+    db "00",0
+
+txt_ptr:
+    db 1,1
+
+txt_game_over_ptr:
+    db 1,1
 
 txt_preamble:
     db "Olipix a un probleme. Aidez-le",0
+    db "Olipix has a problem. Help him",0
+
+txt_gameover_lost:
+    db "Perdu!",0
+    db "Lost! ",0
+
+txt_gameover_won:
+    db "essais!",0
+    db "triez! ",0
+
+txt_gameover_won2:
+    db "essais! (record battu) ",0
+    db "triez! (it iz a record)",0
 
 txt_olipix1:
-    db "Mon ordinateur est sur-puissant ",0
+    db "Mon ordinateur est sur-puissant",0
+    db "My computer iz overpowered",0
 txt_olipix1b:
-    db "C'est nul!   ",0
+    db "C'est nul!",0
+    db "Zees iz so lame!",0
 
 txt_olipix2:
-    db "Mon ordinateur est tout pourri  ",0
+    db "Mon ordinateur est tout pourri",0
+    db "My computer iz crappy",0
 txt_olipix2b:
     db "C'est genial!",0
+    db "Zat iz awesome!",0
 
 txt_olipix3:
     db "C'est trop pourri, meme pour moi",0
+    db "It iz too crappy, even for mee",0
 txt_olipix3b:
     db "C'est chiant",0
+    db "What a drag",0
+
+txt_blank:
+    db "                      ",0
 
 label_cpu:
     db $FD,$55,$55,$7F,$FD,$55,$55,$7F,$F8,$00,$00,$3F,$F8,$00,$00,$3F,$F8,$00,$00,$3F,$F8,$33,$92,$3F,$F8,$4A,$52,$3F,$F8,$43,$92,$3F
